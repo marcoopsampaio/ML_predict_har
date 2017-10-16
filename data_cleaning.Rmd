@@ -1,0 +1,177 @@
+---
+title: "Data cleaning for HAR workout data"
+output: 
+  html_document:
+    keep_md: true
+---
+
+## Introduction
+In this file I present the data cleaning steps of the Human  Activity Recognition workout data. Data and files will only be downloaded once and time stamped. For that purposed I load my own functions to create directories and files together with log files
+```{r}
+source('data_directories.R')
+```
+
+
+## Loading and preprocessing the data
+
+### Loading the data
+First we load the training data
+```{r}
+# Defining data_dir
+data_dirname <- 'data'
+raw_data_subdirname<-'raw'
+url_training <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+training_data_filename<-'training.csv'
+rel_path_training<-make_data_file_download(data_dirname,raw_data_subdirname,url_training,training_data_filename)
+```
+
+```{r}
+training0<-read.csv(rel_path_training)
+head(training0)
+dim(training0)
+colnames(training0)
+```
+We see that there are tons of variables, many of which may or may not be useful. First, clearly we should remove X because it is redundant. Next we may want to delete the username, unless we have to predict for the same subjects. This would be strange because the whole point is to predict if a certain human is doing the exercise correctly not the subjects in our sample. The usernames in the training set are
+```{r}
+training0_users<-unique(training0$user_name)
+```
+So, before proceeding we will now load the test set to see if we are supposed to predict for the same users.
+```{r}
+url_testing <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+testing_data_filename<-'testing.csv'
+rel_path_testing<-make_data_file_download(data_dirname,raw_data_subdirname,url_testing,testing_data_filename)
+```
+And now we load the test data
+```{r}
+testing_final<-read.csv(rel_path_testing)
+head(testing_final)
+dim(testing_final)
+colnames(testing_final)
+testing_users<-unique(testing_final$user_name)
+```
+```{r}
+sort(training0_users)==sort(testing_users)
+```
+So actually! The users are indeed the same. This means that we should not remove this information - I expect it to be a strong predictor when combined with other features.
+
+Before proceeding we have to analyse if there are features that are useless because they have no data or because they have a single value.
+```{r}
+frac_bad<-sapply(training0,function(x) sum(is.na(x))/length(x))
+frac_bad
+```
+We see from this that most features have no missing data and all features that have missing data have over $90\%$ missing. Those should not be good predictors so we remove them now
+```{r}
+var_keep<-character(0)
+for(name in names(frac_bad)){
+  if(frac_bad[name]<0.9 & name !='X'){
+    var_keep<-c(var_keep,name)
+  }
+}
+var_keep
+```
+```{r}
+training0_keep1<-training0[,var_keep]
+head(training0_keep1)
+```
+We can still see that there are lots of variables with empty values (even if not specifically NA). So we need to identify further variables to remove. We follow the same procedure but now identify, instead of NA values, empty strings.
+
+```{r}
+empty_char <-function(x){
+  x==''
+}
+frac_bad2<-sapply(training0_keep1,function(x) sum(empty_char (x))/length(x))
+frac_bad2
+```
+
+```{r}
+var_keep2<-character(0)
+for(name in names(frac_bad2)){
+  if(frac_bad2[name]<0.9){
+    var_keep2<-c(var_keep2,name)
+  }
+}
+var_keep2
+```
+Now we keep only these features
+```{r}
+training0_keep2<-training0[,var_keep2]
+head(training0_keep2)
+```
+Now we need to understand the remaining features. 
+```{r}
+summary(training0_keep2)
+```
+```{r}
+str(training0_keep2)
+```
+We see that most variables are numerica and there are a few factor variables. The factor variables and corresponding levels are
+```{r}
+# get classes of each feature
+feature_classes<-sapply(training0_keep2,class)
+feature_classes[feature_classes=='factor']
+str(training0_keep2[names(feature_classes[feature_classes=='factor'])])
+lapply(training0_keep2[names(feature_classes[feature_classes=='factor'])],function(x) table(x)/length(x))
+```
+We already decided that user_name will be a relevant feature and we know that 'classe' is the truth. So now we need to understand the 'cvtd_timestamp' and the 'new_window' variables.  From the table counts above we see that 'new_window' is almost always 'no' so we do not expect this to have any useful information. Regarding the time stamp, we would need to understand better what it means.  Going back to the paper associated with this data, first let us download it for future reference
+```{r}
+url_paper <- 'http://web.archive.org/web/20170809020213/http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf'
+paper_filename<-'paper.pdf'
+rel_path_paper<-make_data_file_download(data_dirname,raw_data_subdirname,url_paper,paper_filename)
+```
+I could not find a description of the time variables, however I think that this time stamp is irrelevant because we can see in the data other time variables in universal unix time.
+```{r}
+# First we convert a raw timstamp to date
+as.POSIXct(training0_keep2[,'raw_timestamp_part_1'],origin='1970-01-01')[[1]]
+# Now we observe the timestamp to see how it relates to it
+as.vector(training0_keep2[1,'cvtd_timestamp'])
+# We see that up to rounding the second they are the same.
+# Now we convert it to a POSIXct object for an easy comparison and check how many cases are different by more that 60s
+sum(abs(as.vector(sapply(as.vector(training0_keep2['cvtd_timestamp']), function(x) as.POSIXct(x,format="%d/%m/%Y %H:%M")))-training0_keep2[,'raw_timestamp_part_1'])>60)
+```
+So now we are confident that we can remove the 'cvtd_timestamp' as well.  As for the other timestamp, we see that it is much shorter, so we suspect it is some kind of duration for the exercise. We now convert the miliseconds to minutes to check that:
+```{r}
+head(training0_keep2[,'raw_timestamp_part_2']/(1000*60))
+```
+It is not quite clear if the time variables are useful at all or even what they mean. So I will remove them all. 
+
+Finally there is 'num_window' which sounds like something to do with the app that was used (and should be irrelevant from the point of view of prediction)
+```{r}
+table(training0_keep2['num_window'])
+```
+I will remove this variable as well because I can't see that it has anything to do with the sensors or with the way the exercise was carried out.
+
+So our final data cleaned samples are obtained as follows
+```{r}
+var_keep3<-character(0)
+for(name in var_keep2){
+  if(!(name %in% c('raw_timestamp_part_1','raw_timestamp_part_2','cvtd_timestamp','new_window','num_window'))){
+    var_keep3<-c(var_keep3,name)
+  }
+}
+var_keep3
+```
+
+The final training data is
+```{r}
+training0_keep3<-training0_keep2[var_keep3]
+```
+and the final test data is
+```{r}
+var_keep3_testing<-c(var_keep3[1:(length(var_keep3)-1)],'problem_id')
+testing_final_keep3<-testing_final[var_keep3_testing]
+```
+So now we will export this data in order to start carrying out the exploratory analysis in a different script
+```{r}
+clean_data_subdirname<-'clean'
+make_data_sub_directory(data_dirname, clean_data_subdirname)
+training_outfile<-paste(data_dirname,'/',clean_data_subdirname,'/','training_clean.csv',sep='')
+write.csv(training0_keep3,training_outfile)
+testing_outfile<-paste(data_dirname,'/',clean_data_subdirname,'/','testing_clean.csv',sep='')
+write.csv(testing_final_keep3,testing_outfile)
+```
+
+
+
+
+
+

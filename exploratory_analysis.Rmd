@@ -1,0 +1,334 @@
+---
+title: "Exploratory analysis for HAR workout data"
+output: 
+  html_document:
+    keep_md: true
+---
+
+## Introduction
+In this file I present the exploratory of the Human  Activity Recognition workout data. The data was already cleaned up in the script data_cleaning.Rmd. To manage files I load my own functions:
+```{r}
+source('data_directories.R')
+```
+we also load the libraries that are needed and set the seed for reproducibility
+```{r}
+library(caret)
+set.seed(10819)
+```
+
+## Loading the data
+In this file we focus on the original training dataset.
+```{r}
+data_dirname <- 'data'
+clean_data_subdirname<-'clean'
+training_clean<-paste(data_dirname,'/',clean_data_subdirname,'/','training_clean.csv',sep='')
+training0 <- read.csv(training_clean)
+training0<- training0[,2:(dim(training0)[[2]])]
+head(training0)
+```
+Because the testing data is not labeled I will create my own train/test split so that after I have trained the models and cross-validated to choose the best one, then I can have a good measure of the "out of sample error"
+```{r}
+indTrain<-createDataPartition(training0$classe,p=0.80,list=FALSE)
+training<-training0[indTrain,]
+dim(training)
+testing<-training0[-indTrain,]
+dim(testing)
+```
+
+## Exploratory Analysis
+
+In this data set we have mostly numeric data features and only a categorical feature which is the user name. Thus, it makes sense by starting to investigate outliers, correlations (i.e. apply PCA), check if there are features that it makes sense to engineer. and apply feature scaling. Things to check are:
+  
+* **Feature scalling and Outliers**: Here we can start by plotting distributions and then do feature scalling and then check for points away from the center of the distribution
+* **Relations between features**: By plotting pairs of features and checking if we could apply some transformations????
+* **Check if PCA is needed**: 
+
+### Checking for outliers
+Let us start by histograming the distribution of the categorical 'user_name'
+```{r}
+barplot(table(training['user_name']))
+```
+So we see that the data is well balanced among users. 
+Let us start by plotting the distributions of the 52 numerical features. We will use ggplot and make a grid
+```{r}
+library(ggplot2)
+```
+
+
+```{r}
+numeric_vars<-colnames(training)[2:(length(colnames(training))-1)]
+df<-as.data.frame(lapply(training[numeric_vars],as.numeric))
+for(var in numeric_vars){
+p1<-ggplot(df,aes(df[var]))+geom_histogram()+xlab(var)+geom_rug()
+show(p1)
+}
+```
+
+We see from these plots that some of the gyros variables seem to have some outliers all other distributions look ok. So we will first do identify the outliers automatically to see what it going on there. 
+```{r}
+list_bad<-character()
+list_bad
+for(name in colnames(df)){
+  # compute mean
+  meanval<-mean(as.vector(df[,name]))
+  # compute standard deviation
+  sdval<-sd(as.vector(df[,name]))
+  df_temp<-df[as.vector((df[name]>(meanval+10*sdval)) | (df[name]<(meanval-10*sdval))),]
+  if(dim(df_temp)[[1]]>0){
+    list_bad<-append(list_bad,rownames(df_temp))
+  }
+}
+indBad<-as.numeric(unique(list_bad))
+df2<-df[-indBad,]
+```
+
+```{r,fig.width=5,fig.height=3,message=FALSE}
+for(var in numeric_vars){
+p1<-ggplot(df2,aes(df2[var]))+geom_histogram()+xlab(var)+geom_rug()
+show(p1)
+}
+```
+So now we take the training data and also remove the outliers
+```{r}
+training_no_outliers<-training[-indBad,]
+```
+
+### Pre-processing: Feature scaling and PCA
+
+```{r}
+preObj<-preProcess(training_no_outliers[-c(1,54)],method=c('center','scale'))
+training_pre1<-predict(preObj,training_no_outliers[-c(1,54)])
+training_pre1['user_name']<-training_no_outliers[1]
+training_pre1['classe']<-training_no_outliers[54]
+head(training_pre1)
+```
+Let's now experiment PCA
+```{r}
+PCA_vals<-prcomp(training_pre1[-c(53,54)])
+PCA_vals$sdev
+sum(PCA_vals$sdev[1:35])/sum(PCA_vals$sdev)
+```
+So it is not clear if some PCs are more useful than others. I think there is not point on dropping more variables.
+
+### Some further exploratory plots
+
+Now we should make some further plots to understand the relation between the various classes and the variables. Things I would like to do are as follows:
+
+* Repeat distributions but now on each plot there is a color for each classe
+
+```{r,fig.width=5,fig.height=3,message=FALSE}
+for(var in numeric_vars){
+p1<-ggplot(training_pre1,aes(training_pre1[var],fill=classe))+xlab(var)+
+    geom_histogram()
+show(p1)
+}
+```
+Now we will try to figure out useful projections to make some scatter plots. First we split the variables in groups
+
+```{r}
+numeric_vars
+```
+
+```{r}
+numeric_vars[grep('_belt',numeric_vars)]
+```
+```{r}
+numeric_vars[grep('_arm',numeric_vars)]
+```
+```{r}
+numeric_vars[grep('_dumbbell',numeric_vars)]
+```
+```{r}
+numeric_vars[grep('_forearm',numeric_vars)]
+```
+So we see that we have 4 devices, and in each device we have the following measurements:
+
+* (x,y,z) accel + 1 total accel
+* (x,y,z) gyros
+* (x,y,z) magnet
+* roll
+* yaw
+* pitch
+
+Let us try some scatter plots
+```{r}
+df<-training_pre1[c('total_accel_forearm',"total_accel_dumbbell","total_accel_arm","total_accel_belt",'classe')]
+
+ggplot(df,aes(x=total_accel_forearm,y=total_accel_dumbbell,colour=classe))+geom_point(size=1,alpha=0.2)
+```
+```{r}
+ggplot(df,aes(x=total_accel_forearm,y=total_accel_arm,colour=classe))+geom_point(size=1,alpha=0.2)
+```
+
+```{r}
+p1<-ggplot(df,aes(x=total_accel_belt,y=total_accel_dumbbell,colour=classe))+geom_point(size=1,alpha=0.2)+scale_color_manual(values=c('red','yellow','blue','green','pink'),breaks = c('E','D','C','B','A'))
+print(p1)
+p2<-ggplot(df,aes(x=total_accel_belt,y=total_accel_dumbbell,colour=classe))+geom_point(size=1,alpha=0.2)+scale_color_manual(values=c('pink','green','blue','yellow','red'),breaks = c('A','B','C','D','E'))
+print(p2)
+```
+
+The plots don's show much. So I am going back to looking at summary information for each class to see if I get some sense of which variables are important and in which way.
+
+```{r}
+library(plyr)
+library(dplyr)
+test<-group_by(training_pre1[-c(53)],classe)
+summary_vars_class<-summarise_each(test,funs(mean))
+variability_summary_vars<-apply(summary_vars_class,2,sd)
+variability_summary_vars<-variability_summary_vars[2:length(variability_summary_vars)]
+ordered_var_sumr_vars<-variability_summary_vars[order(variability_summary_vars[2:length(variability_summary_vars)],decreasing=TRUE)]
+important_vars<-names(ordered_var_sumr_vars[ordered_var_sumr_vars>0.1])
+important_vars<-c(important_vars,'classe')
+important_vars
+```
+
+
+## Training
+Due to the very large number of features, it seems a bit difficult to o further feature selection/engineering without a much more profound analysis beyond the goals fo this course. Thus we will move on directly to try to train a classifier. 
+
+Because I have applied several operations on the training data, just to be on the safe side I will re-shuffle it (strange things have happened before when I did not)
+
+```{r}
+training_final<-training_pre1[sample(1:dim(training_pre1)[[1]],dim(training_pre1)[[1]],replace = FALSE),]
+```
+
+
+
+### Small sample training
+To get a feel of which algorithms are more efficient with the training, I will start by train small subsamples of the data. To speed up thins let's use 6 cores
+```{r}
+library(doMC)
+registerDoMC(cores = 6)
+```
+
+Let us start by reshuffling the sample
+```{r}
+training_pre1<-training_pre1[sample(1:dim(training_pre1)[[1]],dim(training_pre1)[[1]],replace = FALSE),]
+```
+
+We will use different bootstrap sub-samples for the various algorithms so that when we choose the algorithm that performs best, we are not likely choosing one that just overfits the sample.
+
+We start by comparing a gradient boosting model with all variables, all except user_name, and the subset I have created before. We use a random sample with 2000 cases
+```{r}
+small_training1 <- training_pre1[sample(1:dim(training_pre1)[[1]],2000,replace = TRUE),]
+```
+
+Now we run the three cases 
+```{r}
+gbm_small1<- train(classe~.,method='gbm',data=small_training1,verbose=F)
+gbm_small2<- train(classe~.,method='gbm',data=small_training1[,c(colnames(small_training1)[1:52],'classe')],verbose=F)
+gbm_small3<- train(classe~.,method='gbm',data=small_training1[,important_vars],verbose=F)
+gbm_small1
+gbm_small2
+gbm_small3
+```
+
+
+```{r}
+small_training2 <- training_pre1[sample(1:dim(training_pre1)[[1]],2000,replace = TRUE),]
+rf_small1<- train(classe~.,method='rf',data=small_training2,verbose=F)
+rf_small2<- train(classe~.,method='rf',data=small_training2[,c(colnames(small_training2)[1:52],'classe')],verbose=F)
+rf_small3<- train(classe~.,method='rf',data=small_training2[,important_vars],verbose=F)
+rf_small1
+rf_small2
+rf_small3
+```
+
+Now we try an lda
+```{r}
+small_training3 <- training_pre1[sample(1:dim(training_pre1)[[1]],2000,replace = TRUE),]
+lda_small1<- train(classe~.,method='lda',data=small_training3,verbose=F)
+lda_small2<- train(classe~.,method='lda',data=small_training3[,c(colnames(small_training3)[1:52],'classe')],verbose=F)
+lda_small3<- train(classe~.,method='lda',data=small_training3[,important_vars],verbose=F)
+lda_small1
+lda_small2
+lda_small3
+```
+
+Let's try an SVM
+```{r}
+small_training4 <- training_pre1[sample(1:dim(training_pre1)[[1]],2000,replace = TRUE),]
+svm_small1<- train(classe~.,method='svmLinear',data=small_training4,verbose=F)
+svm_small2<- train(classe~.,method='svmLinear',data=small_training4[,c(colnames(small_training4)[1:52],'classe')],verbose=F)
+svm_small3<- train(classe~.,method='svmLinear',data=small_training4[,important_vars],verbose=F)
+svm_small1
+svm_small2
+svm_small3
+```
+
+svmRadial
+```{r}
+small_training5 <- training_pre1[sample(1:dim(training_pre1)[[1]],2000,replace = TRUE),]
+svm_rad_small1<- train(classe~.,method='svmRadial',data=small_training5,verbose=F)
+svm_rad_small2<- train(classe~.,method='svmRadial',data=small_training5[,c(colnames(small_training5)[1:52],'classe')],verbose=F)
+svm_rad_small3<- train(classe~.,method='svmRadial',data=small_training5[,important_vars],verbose=F)
+svm_rad_small1
+svm_rad_small2
+svm_rad_small3
+```
+
+### Evaluation of models - Metrics
+To evaluate the models I will not compute various metrics. The most important ones are accuracy, precision, recall and area under the ROC curve.
+
+First we produce another bootstrap sample t evaluate the confusion matrix for each model.
+```{r}
+sample_CV_bootstrap <- training_pre1[sample(1:dim(training_pre1)[[1]],2000,replace = TRUE),]
+```
+
+For gbm we have
+```{r}
+gbm_small1_predict<-predict(gbm_small1,sample_CV_bootstrap)
+gbm_small2_predict<-predict(gbm_small2,sample_CV_bootstrap)
+gbm_small3_predict<-predict(gbm_small3,sample_CV_bootstrap)
+confusionMatrix(data = gbm_small1_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = gbm_small2_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = gbm_small3_predict, reference = sample_CV_bootstrap$classe)
+```
+
+
+```{r}
+rf_small1_predict<-predict(rf_small1,sample_CV_bootstrap)
+rf_small2_predict<-predict(rf_small2,sample_CV_bootstrap)
+rf_small3_predict<-predict(rf_small3,sample_CV_bootstrap)
+confusionMatrix(data = rf_small1_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = rf_small2_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = rf_small3_predict, reference = sample_CV_bootstrap$classe)
+```
+
+```{r}
+lda_small1_predict<-predict(lda_small1,sample_CV_bootstrap)
+lda_small2_predict<-predict(lda_small2,sample_CV_bootstrap)
+lda_small3_predict<-predict(lda_small3,sample_CV_bootstrap)
+confusionMatrix(data = lda_small1_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = lda_small2_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = lda_small3_predict, reference = sample_CV_bootstrap$classe)
+```
+
+```{r}
+svm_small1_predict<-predict(svm_small1,sample_CV_bootstrap)
+svm_small2_predict<-predict(svm_small2,sample_CV_bootstrap)
+svm_small3_predict<-predict(svm_small3,sample_CV_bootstrap)
+confusionMatrix(data = svm_small1_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = svm_small2_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = svm_small3_predict, reference = sample_CV_bootstrap$classe)
+```
+
+```{r}
+svm_rad_small1_predict<-predict(svm_rad_small1,sample_CV_bootstrap)
+svm_rad_small2_predict<-predict(svm_rad_small2,sample_CV_bootstrap)
+svm_rad_small3_predict<-predict(svm_rad_small3,sample_CV_bootstrap)
+confusionMatrix(data = svm_rad_small1_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = svm_rad_small2_predict, reference = sample_CV_bootstrap$classe)
+confusionMatrix(data = svm_rad_small3_predict, reference = sample_CV_bootstrap$classe)
+```
+
+There are several insteresting conclusions from this. 
+
+1. First, the tree-based algorithms are clearly superior and are similar. Thus we should be using one of those or maybe even combine them.
+
+2. The the other three simpler models perform much worse, with confusion matrices spreading out much more from the diagonal. Curiousely, the exception is a radial basis function SVM where only the partial set of variables that I identified as potentially more relevant are used, which performs a bit better, whereas the other two perform very badly with an over-prediction of class A. 
+
+3. We also conclude that, in general, we may safely remove the username from the training. If we need the training to be fast, we can also stick to the smaller set of features that I have identified. This sacrifices the performance of the metrics (by eye it looks like around $5\%$, for the algorithms performing best), but maybe this is even reduced when we train the full training set (to be checked).
+
+Concluding, I will train two models, one with all the features that survived the data cleaning stage, and another one with the reduced set of features, using a stochastic gradient boosting method. 
+
