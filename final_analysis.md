@@ -17,7 +17,7 @@ In this file I present a summary of my analysis describing the important steps/c
 Further data cleaning details are found in the repository in the files data_cleaning.* . I did the following:
 
 * **Downloaded:**  the raw data locally into 'data/raw/'
-* **Removed irrelevant variables.** By using sapply, I removed variables that were found that have more that $90\%$ missing values. I found that the time stamps were not useful (could not find their meaning in the references and cannot see how they could be useful). I removed the factor variables 'new_window' and 'num_window' who's names suggest they have nothing to do with exercise performance (could not find information about them either).
+* **Removed irrelevant variables.** By using sapply, I removed variables that were found to have more that $90\%$ missing values. I found that the time stamps were not useful (could not find their meaning in the references and cannot see how they could be useful). I removed the factor variables 'new_window' and 'num_window' who's names suggest they have nothing to do with exercise performance (could not find information about them either).
 * **Saved clean data**: The final data had 54 columns and I saved both training and testing datasets in 'data/clean/' for later use.
 
 # Exploratory analysis
