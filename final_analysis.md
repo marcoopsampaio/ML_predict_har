@@ -237,3 +237,24 @@ ggplot(data = melted_confmat , aes(x=Reference, y=Prediction, fill=value)) +
 ![](final_analysis_files/figure-html/unnamed-chunk-11-1.png)<!-- -->
 
 In conclusion, we have quite high accuracy, precision and recall.
+
+Finally I load the test set for which we do not know 'classe' and apply my model to predict the results for the quizz
+
+```r
+testing_clean<-paste(data_dirname,'/', # clean data filename
+                clean_data_subdirname,
+                '/','testing_clean.csv',
+                sep='')                 
+testing0 <- read.csv(testing_clean)   # reading testing file
+testing0<- testing0[,                 # removing redundant index column
+                      2:(dim(testing0)[[2]])]  
+# Applying pre-processing
+testing0<-predict(preObj,testing0[-c(1,54)])
+predict(gbm52,testing0)
+```
+
+```
+##  [1] B A B A A E D B A A B C B A E E A B B B
+## Levels: A B C D E
+```
+
